@@ -1,324 +1,239 @@
-# =============================================================
+# ============================================================
 # SOCIAL MEDIA TREND ANALYSIS - STREAMLIT DASHBOARD
 # Run: streamlit run app.py
-# Make sure model.pkl is in the same folder as this file
-# =============================================================
+# Files needed in same folder: app.py, model.pkl
+# ============================================================
 
-# =========================
-# 1. IMPORTS
-# =========================
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+import joblib
 import os
 
-# =========================
-# 2. PAGE CONFIG
-# =========================
-st.set_page_config(
-    page_title="Social Media Trend Analysis",
-    layout="wide"
-)
+# ---- PAGE SETUP ----
+st.set_page_config(page_title="Trend Analysis", layout="wide")
+st.title("Social Media Trend Analysis")
+st.caption("Instagram India 2025 | Hashtag Engagement Tracker")
 
-st.title("Social Media Trend Analysis Dashboard")
-st.markdown("Upload your dataset to analyze hashtag trends and predict future engagement.")
+# ---- LOAD MODEL ----
+model = None
+if os.path.exists("model.pkl"):
+    model = joblib.load("model.pkl")
 
-# =========================
-# 3. LOAD MODEL
-# =========================
-MODEL_PATH = "model.pkl"
-
-@st.cache_resource
-def load_model():
-    if not os.path.exists(MODEL_PATH):
-        return None
-    return joblib.load(MODEL_PATH)
-
-model = load_model()
-
-if model is None:
-    st.warning(
-        "model.pkl not found. Please run colab_train.py first to generate the model, "
-        "then place model.pkl in the same folder as this app."
-    )
-
-# =========================
-# 4. FILE UPLOAD
-# =========================
-file = st.file_uploader("Upload Dataset (CSV)", type=["csv"])
-
-if not file:
-    st.info("Please upload a CSV file to begin analysis.")
+# ---- FILE UPLOAD ----
+uploaded = st.file_uploader("Upload CSV Dataset", type=["csv"])
+if not uploaded:
+    st.info("Please upload the dataset CSV to begin.")
     st.stop()
 
-# =========================
-# 5. DATA CLEANING
-# =========================
+# ============================================================
+# LOAD & CLEAN
+# ============================================================
 @st.cache_data
-def load_and_clean(uploaded_file):
-    df = pd.read_csv(uploaded_file)
-
-    # Strip spaces from column names
+def load_data(file):
+    df = pd.read_csv(file)
     df.columns = df.columns.str.strip()
-
-    # Check required columns
-    required = ['Year', 'Month', 'Day', 'Hour', 'Likes', 'Retweets', 'Hashtags']
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        return None, f"Missing required columns: {missing}"
-
-    # Strip whitespace from string columns
-    for col in df.select_dtypes(include='object').columns:
+    for col in df.select_dtypes('object').columns:
         df[col] = df[col].str.strip()
+    df['date'] = pd.to_datetime(df[['Year', 'Month', 'Day', 'Hour']], errors='coerce')
+    df = df.dropna(subset=['date']).sort_values('date').reset_index(drop=True)
+    df['engagement'] = df['Likes'] + df['Retweets']
+    df['day_number']  = (df['date'] - df['date'].min()).dt.days
+    df['moving_avg']  = df['engagement'].rolling(7, min_periods=1).mean()
+    df['growth_rate'] = df['engagement'].pct_change().fillna(0).clip(-5, 5)
+    return df
 
-    # Convert to datetime
-    df['date'] = pd.to_datetime(
-        df[['Year', 'Month', 'Day', 'Hour']],
-        errors='coerce'
-    )
+df = load_data(uploaded)
 
-    # Drop invalid dates
-    original_len = len(df)
-    df = df.dropna(subset=['date'])
-    dropped = original_len - len(df)
-
-    if len(df) == 0:
-        return None, "No valid rows remain after date parsing."
-
-    df = df.sort_values('date').reset_index(drop=True)
-    return df, f"Loaded {len(df)} valid rows. ({dropped} rows dropped due to invalid dates.)"
-
-df, message = load_and_clean(file)
-
-if df is None:
-    st.error(message)
-    st.stop()
-else:
-    st.caption(message)
-
-# =========================
-# 6. DATA PREPARATION
-# =========================
-df['engagement'] = df['Likes'] + df['Retweets']
-df['day_number'] = (df['date'] - df['date'].min()).dt.days
-df['moving_avg'] = df['engagement'].rolling(7, min_periods=1).mean()
-df['growth_rate'] = df['engagement'].pct_change().fillna(0).clip(-5, 5)
-
-# =========================
-# 7. SPLIT: OLD 75% / LATEST 25%
-# =========================
-n = len(df)
-split_idx = int(n * 0.75)
-
-if split_idx == 0 or split_idx == n:
-    st.error("Dataset too small to split into old/latest portions. Please use a larger dataset.")
+if len(df) < 4:
+    st.error("Dataset too small. Need at least 4 rows.")
     st.stop()
 
-old_data = df.iloc[:split_idx]
-latest_data = df.iloc[split_idx:]
+# ============================================================
+# SPLIT INTO 4 PARTS
+# ============================================================
+parts = np.array_split(df, 4)
+part1, part2, part3, part4 = parts
+old_data   = pd.concat([part1, part2, part3])  # first 75%
+latest_data = part4                             # last 25%
 
-# =========================
-# 8. DATASET OVERVIEW
-# =========================
-st.subheader("Dataset Overview")
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total Records", n)
-col2.metric("Date Range Start", df['date'].min().strftime("%b %d, %Y"))
-col3.metric("Date Range End", df['date'].max().strftime("%b %d, %Y"))
-col4.metric("Unique Hashtags", df['Hashtags'].nunique())
+# ============================================================
+# SECTION 1 — DATASET OVERVIEW
+# ============================================================
+st.header("1. Dataset Overview")
+
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Total Records",    f"{len(df):,}")
+c2.metric("Unique Hashtags",  df['Hashtags'].nunique())
+c3.metric("Date From",        df['date'].min().strftime("%d %b %Y"))
+c4.metric("Date To",          df['date'].max().strftime("%d %b %Y"))
+c5.metric("Avg Engagement",   f"{df['engagement'].mean():.0f}")
 
 st.markdown("---")
 
-# =========================
-# 9. CURRENT TRENDING HASHTAGS
-# =========================
-st.subheader("Current Trending Hashtags (Latest 25% of Data)")
+# ============================================================
+# SECTION 2 — 4-PART SPLIT SUMMARY
+# ============================================================
+st.header("2. Dataset Split into 4 Parts")
 
-current_trends = (
-    latest_data.groupby('Hashtags')['engagement']
-    .sum()
-    .sort_values(ascending=False)
-    .head(10)
-    .reset_index()
-)
-current_trends.columns = ['Hashtag', 'Total Engagement']
-current_trends.index = current_trends.index + 1
+split_rows = []
+for i, p in enumerate([part1, part2, part3, part4], 1):
+    split_rows.append({
+        "Part": f"Part {i}" + (" (Latest)" if i == 4 else " (Old)"),
+        "Rows": f"{len(p):,}",
+        "From": p['date'].min().strftime("%d %b %Y"),
+        "To":   p['date'].max().strftime("%d %b %Y"),
+        "Avg Engagement": f"{p['engagement'].mean():.0f}",
+        "Top Hashtag": p.groupby('Hashtags')['engagement'].sum().idxmax()
+    })
 
-col_left, col_right = st.columns([1, 1])
+split_df = pd.DataFrame(split_rows)
+st.dataframe(split_df, use_container_width=True, hide_index=True)
 
-with col_left:
-    st.dataframe(current_trends, use_container_width=True)
+st.markdown("---")
 
-with col_right:
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.barh(
-        current_trends['Hashtag'][::-1],
-        current_trends['Total Engagement'][::-1],
-        color='steelblue'
+# ============================================================
+# SECTION 3 — TREND DIRECTION (Latest vs All Old)
+# ============================================================
+st.header("3. Trend Direction: Latest vs Old Parts")
+
+old_eng    = old_data.groupby('Hashtags')['engagement'].mean()
+latest_eng = latest_data.groupby('Hashtags')['engagement'].mean()
+
+all_tags     = old_eng.index.union(latest_eng.index)
+old_aligned  = old_eng.reindex(all_tags, fill_value=0)
+lat_aligned  = latest_eng.reindex(all_tags, fill_value=0)
+diff         = lat_aligned - old_aligned
+pct_change   = ((lat_aligned - old_aligned) / old_aligned.replace(0, np.nan) * 100).fillna(0)
+
+def label(v):
+    if v > 3:   return "Rising"
+    elif v < -3: return "Falling"
+    else:        return "Stable"
+
+trend_df = pd.DataFrame({
+    "Hashtag":        all_tags,
+    "Old Avg Eng":    old_aligned.values.round(0).astype(int),
+    "Latest Avg Eng": lat_aligned.values.round(0).astype(int),
+    "Change %":       pct_change.values.round(1),
+    "Trend":          pct_change.values
+}).assign(Trend=lambda x: x['Trend'].apply(label)).sort_values("Change %", ascending=False)
+
+rising  = trend_df[trend_df['Trend'] == "Rising"].head(10)
+stable  = trend_df[trend_df['Trend'] == "Stable"].head(10)
+falling = trend_df[trend_df['Trend'] == "Falling"].tail(10).sort_values("Change %")
+
+tab1, tab2, tab3 = st.tabs([
+    f"Rising  ({len(trend_df[trend_df['Trend']=='Rising'])})",
+    f"Stable  ({len(trend_df[trend_df['Trend']=='Stable'])})",
+    f"Falling ({len(trend_df[trend_df['Trend']=='Falling'])})"
+])
+
+with tab1:
+    st.dataframe(
+        rising[['Hashtag','Old Avg Eng','Latest Avg Eng','Change %','Trend']],
+        use_container_width=True, hide_index=True
     )
-    ax.set_xlabel("Total Engagement")
-    ax.set_title("Top 10 Current Hashtags")
+
+with tab2:
+    st.dataframe(
+        stable[['Hashtag','Old Avg Eng','Latest Avg Eng','Change %','Trend']],
+        use_container_width=True, hide_index=True
+    )
+
+with tab3:
+    st.dataframe(
+        falling[['Hashtag','Old Avg Eng','Latest Avg Eng','Change %','Trend']],
+        use_container_width=True, hide_index=True
+    )
+
+st.markdown("---")
+
+# ============================================================
+# SECTION 4 — PREDICTION
+# ============================================================
+st.header("4. Engagement Prediction (Next 7 Days)")
+
+last_day      = int(df['day_number'].max())
+last_mov_avg  = float(df['moving_avg'].iloc[-1])
+last_growth   = float(df['growth_rate'].iloc[-1])
+
+future_input = pd.DataFrame({
+    'day_number':  np.arange(last_day + 1, last_day + 8),
+    'moving_avg':  [last_mov_avg] * 7,
+    'growth_rate': [last_growth]  * 7
+})
+
+if model:
+    preds = model.predict(future_input)
+else:
+    # simple linear fallback if no model
+    avg_eng   = df['engagement'].tail(30).mean()
+    avg_delta = df['engagement'].tail(30).diff().mean()
+    preds = [avg_eng + avg_delta * i for i in range(1, 8)]
+
+pred_df = pd.DataFrame({
+    "Day":                [f"Day +{i}" for i in range(1, 8)],
+    "Predicted Engagement": np.round(preds, 0).astype(int)
+})
+
+col_a, col_b = st.columns([1, 2])
+
+with col_a:
+    st.dataframe(pred_df, use_container_width=True, hide_index=True)
+
+with col_b:
+    fig, ax = plt.subplots(figsize=(7, 3))
+    ax.plot(pred_df['Day'], pred_df['Predicted Engagement'],
+            marker='o', linewidth=2, color='#1f77b4')
+    ax.fill_between(pred_df['Day'], pred_df['Predicted Engagement'],
+                    alpha=0.1, color='#1f77b4')
+    ax.set_ylabel("Predicted Engagement")
+    ax.set_title("Next 7 Days Forecast")
+    ax.tick_params(axis='x', rotation=20)
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
 
 st.markdown("---")
 
-# =========================
-# 10. TREND DIRECTION ANALYSIS
-# =========================
-st.subheader("Trend Direction: Rising vs Falling")
+# ============================================================
+# SECTION 5 — ENGAGEMENT OVER TIME
+# ============================================================
+st.header("5. Engagement Over Time")
 
-old_eng = old_data.groupby('Hashtags')['engagement'].sum()
-latest_eng = latest_data.groupby('Hashtags')['engagement'].sum()
+daily = df.set_index('date')['engagement'].resample('D').sum().reset_index()
 
-# Align on common hashtags
-all_tags = old_eng.index.union(latest_eng.index)
-old_aligned = old_eng.reindex(all_tags, fill_value=0)
-latest_aligned = latest_eng.reindex(all_tags, fill_value=0)
+fig2, ax2 = plt.subplots(figsize=(12, 3.5))
+ax2.plot(daily['date'], daily['engagement'], linewidth=1.2, color='steelblue')
+ax2.fill_between(daily['date'], daily['engagement'], alpha=0.12, color='steelblue')
+ax2.axvline(latest_data['date'].min(), color='red', linestyle='--',
+            linewidth=1.2, label='Latest 25% starts here')
+ax2.set_xlabel("Date")
+ax2.set_ylabel("Daily Engagement")
+ax2.set_title("Daily Total Engagement — Full Year 2025")
+ax2.legend()
+plt.tight_layout()
+st.pyplot(fig2)
+plt.close()
 
-trend_diff = (latest_aligned - old_aligned).sort_values(ascending=False)
+# Top hashtag monthly trend
+st.subheader("Monthly Average Engagement — Top 5 Hashtags")
 
-# Label direction
-def label_trend(val):
-    if val > 0:
-        return "Rising"
-    elif val < 0:
-        return "Falling"
-    else:
-        return "Stable"
-
-trend_df = pd.DataFrame({
-    'Hashtag': trend_diff.index,
-    'Engagement Change': trend_diff.values,
-    'Direction': trend_diff.values
-}).assign(Direction=lambda x: x['Direction'].apply(label_trend))
-trend_df = trend_df.reset_index(drop=True)
-
-col_rise, col_fall = st.columns(2)
-
-with col_rise:
-    st.markdown("**Rising Trends (Top 5)**")
-    rising = trend_df[trend_df['Direction'] == 'Rising'].head(5).reset_index(drop=True)
-    rising.index = rising.index + 1
-    st.dataframe(rising[['Hashtag', 'Engagement Change']], use_container_width=True)
-
-with col_fall:
-    st.markdown("**Falling Trends (Top 5)**")
-    falling = trend_df[trend_df['Direction'] == 'Falling'].tail(5).sort_values(
-        'Engagement Change'
-    ).reset_index(drop=True)
-    falling.index = falling.index + 1
-    st.dataframe(falling[['Hashtag', 'Engagement Change']], use_container_width=True)
-
-st.markdown("---")
-
-# =========================
-# 11. FUTURE ENGAGEMENT PREDICTION
-# =========================
-st.subheader("Future Engagement Prediction (Next 7 Time Steps)")
-
-if model is None:
-    st.warning("No model loaded. Showing linear trend estimate instead.")
-
-    # Simple linear fallback
-    last_val = df['engagement'].iloc[-1]
-    avg_delta = df['engagement'].diff().mean()
-    preds = [last_val + avg_delta * i for i in range(1, 8)]
-else:
-    last_day = df['day_number'].max()
-    last_moving_avg = df['moving_avg'].iloc[-1]
-    last_growth_rate = df['growth_rate'].iloc[-1]
-
-    future_df = pd.DataFrame({
-        'day_number': np.arange(last_day + 1, last_day + 8),
-        'moving_avg': [last_moving_avg] * 7,
-        'growth_rate': [last_growth_rate] * 7
-    })
-    preds = model.predict(future_df)
-
-pred_df = pd.DataFrame({
-    'Step': [f"Step {i+1}" for i in range(7)],
-    'Predicted Engagement': np.round(preds, 1)
-})
-pred_df.index = pred_df.index + 1
-
-col_pred_table, col_pred_chart = st.columns([1, 1])
-
-with col_pred_table:
-    st.dataframe(pred_df, use_container_width=True)
-
-with col_pred_chart:
-    fig2, ax2 = plt.subplots(figsize=(6, 4))
-    ax2.plot(
-        pred_df['Step'],
-        pred_df['Predicted Engagement'],
-        marker='o',
-        color='darkorange',
-        linewidth=2
-    )
-    ax2.set_xlabel("Future Step")
-    ax2.set_ylabel("Predicted Engagement")
-    ax2.set_title("Predicted Engagement - Next 7 Steps")
-    ax2.tick_params(axis='x', rotation=30)
-    plt.tight_layout()
-    st.pyplot(fig2)
-    plt.close()
-
-st.markdown("---")
-
-# =========================
-# 12. ENGAGEMENT OVER TIME GRAPH
-# =========================
-st.subheader("Engagement Over Time")
-
-# Resample to daily for cleaner chart
-daily_eng = df.set_index('date')['engagement'].resample('D').sum().reset_index()
-daily_eng.columns = ['date', 'engagement']
+top5 = df.groupby('Hashtags')['engagement'].sum().nlargest(5).index.tolist()
+df_top = df[df['Hashtags'].isin(top5)].copy()
+df_top['month'] = df_top['date'].dt.to_period('M').astype(str)
+monthly = df_top.groupby(['month', 'Hashtags'])['engagement'].mean().unstack(fill_value=0)
 
 fig3, ax3 = plt.subplots(figsize=(12, 4))
-ax3.plot(daily_eng['date'], daily_eng['engagement'], color='steelblue', linewidth=1.2)
-ax3.fill_between(daily_eng['date'], daily_eng['engagement'], alpha=0.15, color='steelblue')
-
-# Vertical split marker
-split_date = old_data['date'].max()
-ax3.axvline(x=split_date, color='red', linestyle='--', linewidth=1, label='Old / Latest split')
-
-ax3.set_xlabel("Date")
-ax3.set_ylabel("Total Engagement")
-ax3.set_title("Daily Engagement Over Time")
-ax3.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
-ax3.xaxis.set_major_locator(mdates.MonthLocator())
-plt.xticks(rotation=45)
-ax3.legend()
+for col in monthly.columns:
+    ax3.plot(monthly.index, monthly[col], marker='o', markersize=3, label=col, linewidth=1.5)
+ax3.set_xlabel("Month")
+ax3.set_ylabel("Avg Engagement")
+ax3.set_title("Monthly Engagement Trend — Top 5 Hashtags")
+ax3.legend(loc='upper left', fontsize=8)
+ax3.tick_params(axis='x', rotation=35)
 plt.tight_layout()
 st.pyplot(fig3)
 plt.close()
-
-# Moving average overlay
-st.markdown("**7-Day Rolling Average of Engagement**")
-fig4, ax4 = plt.subplots(figsize=(12, 3))
-ax4.plot(df['date'], df['moving_avg'], color='seagreen', linewidth=1.5)
-ax4.set_xlabel("Date")
-ax4.set_ylabel("Moving Avg Engagement")
-ax4.set_title("7-Day Rolling Mean")
-ax4.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
-ax4.xaxis.set_major_locator(mdates.MonthLocator())
-plt.xticks(rotation=45)
-plt.tight_layout()
-st.pyplot(fig4)
-plt.close()
-
-st.markdown("---")
-
-# =========================
-# 13. RAW DATA PREVIEW
-# =========================
-with st.expander("View Raw Data (first 50 rows)"):
-    st.dataframe(
-        df[['date', 'Hashtags', 'Likes', 'Retweets', 'engagement']].head(50),
-        use_container_width=True
-    )
