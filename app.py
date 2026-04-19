@@ -1,7 +1,7 @@
 # ============================================================
 # SOCIAL MEDIA TREND ANALYSIS - STREAMLIT DASHBOARD
+# Requires: model.pkl (trained in Colab) in same folder
 # Run: streamlit run app.py
-# Files needed in same folder: app.py, model.pkl
 # ============================================================
 
 import streamlit as st
@@ -17,9 +17,11 @@ st.title("Social Media Trend Analysis")
 st.caption("Instagram India 2025 | Hashtag Engagement Tracker")
 
 # ---- LOAD MODEL ----
-model = None
-if os.path.exists("model.pkl"):
-    model = joblib.load("model.pkl")
+if not os.path.exists("model.pkl"):
+    st.error("model.pkl not found. Please train the model in Colab first and place model.pkl in this folder.")
+    st.stop()
+
+model = joblib.load("model.pkl")
 
 # ---- FILE UPLOAD ----
 uploaded = st.file_uploader("Upload CSV Dataset", type=["csv"])
@@ -55,8 +57,8 @@ if len(df) < 4:
 # ============================================================
 parts = np.array_split(df, 4)
 part1, part2, part3, part4 = parts
-old_data   = pd.concat([part1, part2, part3])  # first 75%
-latest_data = part4                             # last 25%
+old_data    = pd.concat([part1, part2, part3])
+latest_data = part4
 
 # ============================================================
 # SECTION 1 — DATASET OVERVIEW
@@ -64,11 +66,11 @@ latest_data = part4                             # last 25%
 st.header("1. Dataset Overview")
 
 c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Total Records",    f"{len(df):,}")
-c2.metric("Unique Hashtags",  df['Hashtags'].nunique())
-c3.metric("Date From",        df['date'].min().strftime("%d %b %Y"))
-c4.metric("Date To",          df['date'].max().strftime("%d %b %Y"))
-c5.metric("Avg Engagement",   f"{df['engagement'].mean():.0f}")
+c1.metric("Total Records",   f"{len(df):,}")
+c2.metric("Unique Hashtags", df['Hashtags'].nunique())
+c3.metric("Date From",       df['date'].min().strftime("%d %b %Y"))
+c4.metric("Date To",         df['date'].max().strftime("%d %b %Y"))
+c5.metric("Avg Engagement",  f"{df['engagement'].mean():.0f}")
 
 st.markdown("---")
 
@@ -80,73 +82,60 @@ st.header("2. Dataset Split into 4 Parts")
 split_rows = []
 for i, p in enumerate([part1, part2, part3, part4], 1):
     split_rows.append({
-        "Part": f"Part {i}" + (" (Latest)" if i == 4 else " (Old)"),
-        "Rows": f"{len(p):,}",
-        "From": p['date'].min().strftime("%d %b %Y"),
-        "To":   p['date'].max().strftime("%d %b %Y"),
+        "Part":           f"Part {i}" + (" (Latest)" if i == 4 else " (Old)"),
+        "Rows":           f"{len(p):,}",
+        "From":           p['date'].min().strftime("%d %b %Y"),
+        "To":             p['date'].max().strftime("%d %b %Y"),
         "Avg Engagement": f"{p['engagement'].mean():.0f}",
-        "Top Hashtag": p.groupby('Hashtags')['engagement'].sum().idxmax()
+        "Top Hashtag":    p.groupby('Hashtags')['engagement'].sum().idxmax()
     })
 
-split_df = pd.DataFrame(split_rows)
-st.dataframe(split_df, use_container_width=True, hide_index=True)
-
+st.dataframe(pd.DataFrame(split_rows), use_container_width=True, hide_index=True)
 st.markdown("---")
 
 # ============================================================
-# SECTION 3 — TREND DIRECTION (Latest vs All Old)
+# SECTION 3 — TREND DIRECTION
 # ============================================================
 st.header("3. Trend Direction: Latest vs Old Parts")
 
 old_eng    = old_data.groupby('Hashtags')['engagement'].mean()
 latest_eng = latest_data.groupby('Hashtags')['engagement'].mean()
-
-all_tags     = old_eng.index.union(latest_eng.index)
-old_aligned  = old_eng.reindex(all_tags, fill_value=0)
-lat_aligned  = latest_eng.reindex(all_tags, fill_value=0)
-diff         = lat_aligned - old_aligned
-pct_change   = ((lat_aligned - old_aligned) / old_aligned.replace(0, np.nan) * 100).fillna(0)
+all_tags   = old_eng.index.union(latest_eng.index)
+old_al     = old_eng.reindex(all_tags, fill_value=0)
+lat_al     = latest_eng.reindex(all_tags, fill_value=0)
+pct        = ((lat_al - old_al) / old_al.replace(0, np.nan) * 100).fillna(0)
 
 def label(v):
-    if v > 3:   return "Rising"
+    if v > 3:    return "Rising"
     elif v < -3: return "Falling"
     else:        return "Stable"
 
 trend_df = pd.DataFrame({
     "Hashtag":        all_tags,
-    "Old Avg Eng":    old_aligned.values.round(0).astype(int),
-    "Latest Avg Eng": lat_aligned.values.round(0).astype(int),
-    "Change %":       pct_change.values.round(1),
-    "Trend":          pct_change.values
+    "Old Avg Eng":    old_al.values.round(0).astype(int),
+    "Latest Avg Eng": lat_al.values.round(0).astype(int),
+    "Change %":       pct.values.round(1),
+    "Trend":          pct.values
 }).assign(Trend=lambda x: x['Trend'].apply(label)).sort_values("Change %", ascending=False)
 
-rising  = trend_df[trend_df['Trend'] == "Rising"].head(10)
-stable  = trend_df[trend_df['Trend'] == "Stable"].head(10)
-falling = trend_df[trend_df['Trend'] == "Falling"].tail(10).sort_values("Change %")
+rising  = trend_df[trend_df['Trend'] == "Rising"]
+stable  = trend_df[trend_df['Trend'] == "Stable"]
+falling = trend_df[trend_df['Trend'] == "Falling"].sort_values("Change %")
 
 tab1, tab2, tab3 = st.tabs([
-    f"Rising  ({len(trend_df[trend_df['Trend']=='Rising'])})",
-    f"Stable  ({len(trend_df[trend_df['Trend']=='Stable'])})",
-    f"Falling ({len(trend_df[trend_df['Trend']=='Falling'])})"
+    f"Rising  ({len(rising)})",
+    f"Stable  ({len(stable)})",
+    f"Falling ({len(falling)})"
 ])
-
 with tab1:
-    st.dataframe(
-        rising[['Hashtag','Old Avg Eng','Latest Avg Eng','Change %','Trend']],
-        use_container_width=True, hide_index=True
-    )
-
+    st.dataframe(rising[['Hashtag','Old Avg Eng','Latest Avg Eng','Change %','Trend']],
+                 use_container_width=True, hide_index=True)
 with tab2:
-    st.dataframe(
-        stable[['Hashtag','Old Avg Eng','Latest Avg Eng','Change %','Trend']],
-        use_container_width=True, hide_index=True
-    )
-
+    st.dataframe(stable[['Hashtag','Old Avg Eng','Latest Avg Eng','Change %','Trend']],
+                 use_container_width=True, hide_index=True)
 with tab3:
-    st.dataframe(
-        falling[['Hashtag','Old Avg Eng','Latest Avg Eng','Change %','Trend']],
-        use_container_width=True, hide_index=True
-    )
+    st.dataframe(falling[['Hashtag','Old Avg Eng','Latest Avg Eng','Change %','Trend']],
+                 use_container_width=True, hide_index=True)
 
 st.markdown("---")
 
@@ -155,34 +144,25 @@ st.markdown("---")
 # ============================================================
 st.header("4. Engagement Prediction (Next 7 Days)")
 
-last_day      = int(df['day_number'].max())
-last_mov_avg  = float(df['moving_avg'].iloc[-1])
-last_growth   = float(df['growth_rate'].iloc[-1])
+last_day     = int(df['day_number'].max())
+last_mov_avg = float(df['moving_avg'].iloc[-1])
+last_growth  = float(df['growth_rate'].iloc[-1])
 
 future_input = pd.DataFrame({
     'day_number':  np.arange(last_day + 1, last_day + 8),
     'moving_avg':  [last_mov_avg] * 7,
     'growth_rate': [last_growth]  * 7
 })
-
-if model:
-    preds = model.predict(future_input)
-else:
-    # simple linear fallback if no model
-    avg_eng   = df['engagement'].tail(30).mean()
-    avg_delta = df['engagement'].tail(30).diff().mean()
-    preds = [avg_eng + avg_delta * i for i in range(1, 8)]
+preds = model.predict(future_input)
 
 pred_df = pd.DataFrame({
-    "Day":                [f"Day +{i}" for i in range(1, 8)],
+    "Day":                  [f"Day +{i}" for i in range(1, 8)],
     "Predicted Engagement": np.round(preds, 0).astype(int)
 })
 
 col_a, col_b = st.columns([1, 2])
-
 with col_a:
     st.dataframe(pred_df, use_container_width=True, hide_index=True)
-
 with col_b:
     fig, ax = plt.subplots(figsize=(7, 3))
     ax.plot(pred_df['Day'], pred_df['Predicted Engagement'],
@@ -212,23 +192,23 @@ ax2.axvline(latest_data['date'].min(), color='red', linestyle='--',
             linewidth=1.2, label='Latest 25% starts here')
 ax2.set_xlabel("Date")
 ax2.set_ylabel("Daily Engagement")
-ax2.set_title("Daily Total Engagement — Full Year 2025")
+ax2.set_title("Daily Total Engagement")
 ax2.legend()
 plt.tight_layout()
 st.pyplot(fig2)
 plt.close()
 
-# Top hashtag monthly trend
 st.subheader("Monthly Average Engagement — Top 5 Hashtags")
 
-top5 = df.groupby('Hashtags')['engagement'].sum().nlargest(5).index.tolist()
+top5   = df.groupby('Hashtags')['engagement'].sum().nlargest(5).index.tolist()
 df_top = df[df['Hashtags'].isin(top5)].copy()
 df_top['month'] = df_top['date'].dt.to_period('M').astype(str)
-monthly = df_top.groupby(['month', 'Hashtags'])['engagement'].mean().unstack(fill_value=0)
+monthly = df_top.groupby(['month','Hashtags'])['engagement'].mean().unstack(fill_value=0)
 
 fig3, ax3 = plt.subplots(figsize=(12, 4))
 for col in monthly.columns:
-    ax3.plot(monthly.index, monthly[col], marker='o', markersize=3, label=col, linewidth=1.5)
+    ax3.plot(monthly.index, monthly[col], marker='o', markersize=3,
+             label=col, linewidth=1.5)
 ax3.set_xlabel("Month")
 ax3.set_ylabel("Avg Engagement")
 ax3.set_title("Monthly Engagement Trend — Top 5 Hashtags")
