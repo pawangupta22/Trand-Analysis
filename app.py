@@ -4,7 +4,7 @@ import numpy as np
 import joblib
 import matplotlib.pyplot as plt
 
-st.title("📊 Trend Analysis Dashboard")
+st.title("Trend Analysis Dashboard")
 
 model = joblib.load("model.pkl")
 le = joblib.load("encoder.pkl")
@@ -27,7 +27,7 @@ if file:
     # =========================
     # DATASET OVERVIEW
     # =========================
-    st.subheader("📌 Overview")
+    st.subheader("Overview")
     st.write({
         "Total Rows": len(df),
         "Unique Hashtags": df['Hashtags'].nunique(),
@@ -37,15 +37,25 @@ if file:
     # =========================
     # SPLIT INTO 4 PARTS
     # =========================
-    parts = np.array_split(df, 4)
+    df = df.reset_index(drop=True)
 
-    old_data = pd.concat(parts[:3])
-    latest_data = parts[3]
+    n = len(df)
 
+    split1 = int(n * 0.25)
+    split2 = int(n * 0.50)
+    split3 = int(n * 0.75)
+
+    part1 = df.iloc[:split1]
+    part2 = df.iloc[split1:split2]
+    part3 = df.iloc[split2:split3]
+    part4 = df.iloc[split3:]
+
+    old_data = df.iloc[:split3]
+    latest_data = df.iloc[split3:]
     # =========================
     # CURRENT TREND
     # =========================
-    st.subheader("🔥 Current Trends")
+    st.subheader("Current Trends")
 
     current = latest_data.groupby('Hashtags')['engagement'].mean().sort_values(ascending=False)
     st.dataframe(current.head(5))
@@ -66,10 +76,10 @@ if file:
     rising = trend[trend["change_pct"] > 3]
     falling = trend[trend["change_pct"] < -3]
 
-    st.subheader("📈 Rising Trends")
+    st.subheader("Rising Trends")
     st.dataframe(rising.sort_values("change_pct", ascending=False).head(5))
 
-    st.subheader("📉 Falling Trends")
+    st.subheader("Falling Trends")
     st.dataframe(falling.sort_values("change_pct").head(5))
 
     # =========================
@@ -110,7 +120,7 @@ if file:
     # =========================
     # GRAPH
     # =========================
-    st.subheader("📉 Engagement Over Time")
+    st.subheader("Engagement Over Time")
 
     fig, ax = plt.subplots()
     ax.plot(df['date'], df['engagement'])
