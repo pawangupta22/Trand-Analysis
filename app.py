@@ -1,127 +1,85 @@
 import streamlit as st
-import pandas as pd
 import numpy as np
-import joblib
-import matplotlib.pyplot as plt
+from model import load_and_train
 
-st.title("Trend Analysis Dashboard")
+st.set_page_config(page_title="Trend Predictor", layout="wide")
 
-model = joblib.load("model.pkl")
-le = joblib.load("encoder.pkl")
+st.title("🚀 Social Media Trend Dashboard")
 
-file = st.file_uploader("Upload Dataset", type=["csv"])
+# Load models
+df, rf_reg, rf_clf, le_platform, le_region, le_content, le_hashtag = load_and_train()
 
-if file:
-    df = pd.read_csv(file)
-    df.columns = df.columns.str.strip()
+# -------------------------------
+# SECTION 1: CURRENT TRENDING
+# -------------------------------
+st.header("🔥 Current Trending Hashtags")
 
-    # =========================
-    # CLEANING
-    # =========================
-    df['date'] = pd.to_datetime(df[['Year','Month','Day','Hour']], errors='coerce')
-    df = df.dropna(subset=['date'])
-    df = df.sort_values('date')
+recent = df[df['Post_Date'] >= df['Post_Date'].max() - pd.Timedelta(days=30)]
+trending = recent.groupby('Hashtag')['Views'].sum().sort_values(ascending=False)
 
-    df['engagement'] = df['Likes'] + df['Retweets']
+st.bar_chart(trending.head(10))
 
-    # =========================
-    # DATASET OVERVIEW
-    # =========================
-    st.subheader("Overview")
-    st.write({
-        "Total Rows": len(df),
-        "Unique Hashtags": df['Hashtags'].nunique(),
-        "Avg Engagement": int(df['engagement'].mean())
-    })
+# -------------------------------
+# SECTION 2: USER INPUT
+# -------------------------------
+st.header("🎯 Predict Your Content Performance")
 
-    # =========================
-    # SPLIT INTO 4 PARTS
-    # =========================
-    df = df.reset_index(drop=True)
+col1, col2 = st.columns(2)
 
-    n = len(df)
+with col1:
+    platform = st.selectbox("Platform", le_platform.classes_)
+    content = st.selectbox("Content Type", le_content.classes_)
+    region = st.selectbox("Region", le_region.classes_)
 
-    split1 = int(n * 0.25)
-    split2 = int(n * 0.50)
-    split3 = int(n * 0.75)
+with col2:
+    hashtag = st.selectbox("Hashtag", le_hashtag.classes_)
+    day = st.slider("Day", 1, 31, 15)
+    month = st.slider("Month", 1, 12, 6)
+    dayofweek = st.slider("Day of Week (0=Mon)", 0, 6, 3)
 
-    part1 = df.iloc[:split1]
-    part2 = df.iloc[split1:split2]
-    part3 = df.iloc[split2:split3]
-    part4 = df.iloc[split3:]
+# -------------------------------
+# PREDICT BUTTON
+# -------------------------------
+if st.button("🔮 Predict"):
 
-    old_data = df.iloc[:split3]
-    latest_data = df.iloc[split3:]
-    # =========================
-    # CURRENT TREND
-    # =========================
-    st.subheader("Current Trends")
+    # Encode
+    platform_enc = le_platform.transform([platform])[0]
+    region_enc = le_region.transform([region])[0]
+    content_enc = le_content.transform([content])[0]
+    hashtag_enc = le_hashtag.transform([hashtag])[0]
 
-    current = latest_data.groupby('Hashtags')['engagement'].mean().sort_values(ascending=False)
-    st.dataframe(current.head(5))
+    user_data = np.array([[platform_enc, region_enc, content_enc, day, month, dayofweek, hashtag_enc]])
 
-    # =========================
-    # TREND DIRECTION
-    # =========================
-    old_avg = old_data.groupby('Hashtags')['engagement'].mean()
-    latest_avg = latest_data.groupby('Hashtags')['engagement'].mean()
+    # Predict
+    views = rf_reg.predict(user_data)[0]
+    trend = rf_clf.predict(user_data)[0]
 
-    trend = pd.DataFrame({
-        "old": old_avg,
-        "latest": latest_avg
-    }).fillna(0)
+    # Output
+    st.subheader("📊 Prediction Result")
 
-    trend["change_pct"] = ((trend["latest"] - trend["old"]) / (trend["old"] + 1)) * 100
+    col1, col2 = st.columns(2)
 
-    rising = trend[trend["change_pct"] > 3]
-    falling = trend[trend["change_pct"] < -3]
+    with col1:
+        st.metric("Expected Views", int(views))
 
-    st.subheader("Rising Trends")
-    st.dataframe(rising.sort_values("change_pct", ascending=False).head(5))
+    with col2:
+        if trend == "Trending":
+            st.success("🚀 Trending")
+        elif trend == "Falling":
+            st.error("📉 Falling")
+        else:
+            st.warning("😐 Stable")
 
-    st.subheader("Falling Trends")
-    st.dataframe(falling.sort_values("change_pct").head(5))
+# -------------------------------
+# SECTION 3: PATTERN INSIGHTS
+# -------------------------------
+st.header("📊 Feature Importance (What Matters Most)")
 
-    # =========================
-    # FEATURES
-    # =========================
-    df['day_number'] = (df['date'] - df['date'].min()).dt.days
-    df['ma_3'] = df['engagement'].rolling(3).mean().fillna(0)
-    df['ma_7'] = df['engagement'].rolling(7).mean().fillna(0)
-    df['growth_rate'] = df['engagement'].pct_change().fillna(0).clip(-5, 5)
+importance = rf_reg.feature_importances_
+features = ['Platform','Region','Content_Type','Day','Month','DayOfWeek','Hashtag_enc']
 
-    df['day_of_week'] = df['date'].dt.dayofweek
-    df['month'] = df['date'].dt.month
-    df['hour'] = df['date'].dt.hour
+import pandas as pd
+imp_df = pd.DataFrame({"Feature": features, "Importance": importance})
+imp_df = imp_df.sort_values(by="Importance", ascending=False)
 
-    df['hashtag_encoded'] = le.transform(df['Hashtags'])
-
-    # =========================
-    # FUTURE PREDICTION
-    # =========================
-    last_day = df['day_number'].max()
-
-    future = pd.DataFrame({
-        'day_number': np.arange(last_day+1, last_day+8),
-        'ma_3': [df['ma_3'].iloc[-1]]*7,
-        'ma_7': [df['ma_7'].iloc[-1]]*7,
-        'growth_rate': [df['growth_rate'].iloc[-1]]*7,
-        'day_of_week': [df['day_of_week'].iloc[-1]]*7,
-        'month': [df['month'].iloc[-1]]*7,
-        'hour': [df['hour'].iloc[-1]]*7,
-        'hashtag_encoded': [df['hashtag_encoded'].iloc[-1]]*7
-    })
-
-    preds = model.predict(future)
-
-    st.subheader("🔮 Next 7 Days Prediction")
-    st.write(preds.astype(int))
-
-    # =========================
-    # GRAPH
-    # =========================
-    st.subheader("Engagement Over Time")
-
-    fig, ax = plt.subplots()
-    ax.plot(df['date'], df['engagement'])
-    st.pyplot(fig)
+st.bar_chart(imp_df.set_index("Feature"))
