@@ -1,5 +1,6 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
 from model import load_and_train
 
 st.set_page_config(page_title="Trend Predictor", layout="wide")
