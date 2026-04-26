@@ -50,6 +50,12 @@ st.title("Social Media Trend Dashboard")
 # -------------------------------
 df, rf_reg, rf_clf, le_platform, le_region, le_content, le_hashtag = load_and_train()
 
+# Data Range
+start_year = df['Post_Date'].min().year
+end_year = df['Post_Date'].max().year
+
+st.info(f"Data Available: {start_year} to {end_year}")
+
 # -------------------------------
 # SIDEBAR INPUT
 # -------------------------------
